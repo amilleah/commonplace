@@ -403,7 +403,7 @@ final class FileMonitor {
     }
 
     private func generateVideoThumbnail(for fileURL: URL, thumbDir: URL) async -> String? {
-        let asset = AVAsset(url: fileURL)
+        let asset = AVURLAsset(url: fileURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 600, height: 600)

@@ -1199,7 +1199,7 @@ private struct ScreenshotCard: View {
 /// `thumbnailPath` is missing or the file at that path cannot be loaded.
 /// Used by RecordingCard and FileCard so the masonry always shows a real
 /// preview instead of an icon placeholder.
-private enum LiveThumbnail {
+enum LiveThumbnail {
     static func generate(for fileURL: URL) async -> NSImage? {
         let ext = fileURL.pathExtension.lowercased()
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
@@ -1227,7 +1227,7 @@ private enum LiveThumbnail {
 
         let videoExts: Set<String> = ["mp4", "mov", "m4v", "avi", "mkv", "webm"]
         if videoExts.contains(ext) {
-            let asset = AVAsset(url: fileURL)
+            let asset = AVURLAsset(url: fileURL)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: 600, height: 600)
