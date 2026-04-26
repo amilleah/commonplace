@@ -76,6 +76,10 @@ enum MaterialAction {
         }
     }
 
+    static func delete(_ highlight: Highlight) {
+        DatabaseManager.shared.deleteHighlight(id: highlight.id)
+    }
+
     static func shareItems(for highlight: Highlight) -> [Any] {
         if let url = localFileURL(for: highlight) { return [url] }
         if highlight.isURLCopy,
@@ -131,6 +135,14 @@ struct MaterialContextMenuModifier: ViewModifier {
                     }
                 }
             }
+
+            Divider()
+
+            Button(role: .destructive) {
+                MaterialAction.delete(highlight)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
@@ -161,6 +173,7 @@ final class MaterialMenuTarget: NSObject {
     var onRevealInFinder: (() -> Void)?
     var onShare: ((NSView) -> Void)?
     var onToggleTag: ((String) -> Void)?
+    var onDelete: (() -> Void)?
     var onDismiss: (() -> Void)?
 
     @objc func copyMaterial() { onCopy?() }
@@ -174,6 +187,7 @@ final class MaterialMenuTarget: NSObject {
         guard let tagId = sender.representedObject as? String else { return }
         onToggleTag?(tagId)
     }
+    @objc func deleteMaterial() { onDelete?() }
     @objc func dismissToast() { onDismiss?() }
 }
 
@@ -237,6 +251,14 @@ func buildMaterialNSMenu(
     let collItem = NSMenuItem(title: "Collection", action: nil, keyEquivalent: "")
     collItem.submenu = collMenu
     menu.addItem(collItem)
+
+    menu.addItem(.separator())
+
+    let deleteItem = NSMenuItem(title: "Delete",
+                                action: #selector(MaterialMenuTarget.deleteMaterial),
+                                keyEquivalent: "")
+    deleteItem.target = target
+    menu.addItem(deleteItem)
 
     if includeDismiss {
         menu.addItem(.separator())

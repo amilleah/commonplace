@@ -550,6 +550,67 @@ final class DatabaseManager {
         }
     }
 
+    /// Permanently removes a highlight and all associated data:
+    /// - highlight_note and highlight_tag rows (via CASCADE)
+    /// - screenshot / recording / file_record rows and their managed files on disk
+    /// Desktop screenshots (captureType="desktop") reference the user's original
+    /// file and are never deleted from disk.
+    func deleteHighlight(id: String) {
+        guard let dbQueue else { return }
+
+        // Fetch linked record IDs before deleting the highlight row
+        let h = highlight(byId: id)
+
+        do {
+            try dbQueue.write { db in
+                // screenshot row
+                if let sid = h?.screenshotId {
+                    if let rec = try ScreenshotRecord.fetchOne(db, sql: "SELECT * FROM screenshot WHERE id = ?", arguments: [sid]) {
+                        if rec.captureType != "desktop" {
+                            try? FileManager.default.removeItem(atPath: rec.filePath)
+                        }
+                        try db.execute(sql: "DELETE FROM screenshot WHERE id = ?", arguments: [sid])
+                    }
+                }
+
+                // recording row
+                if let rid = h?.recordingId {
+                    if let rec = try RecordingRecord.fetchOne(db, sql: "SELECT * FROM recording WHERE id = ?", arguments: [rid]) {
+                        try? FileManager.default.removeItem(atPath: rec.filePath)
+                        try? FileManager.default.removeItem(atPath: rec.thumbnailPath)
+                        try db.execute(sql: "DELETE FROM recording WHERE id = ?", arguments: [rid])
+                    }
+                }
+
+                // file_record row — only delete managed copies (inside app support)
+                if let fid = h?.fileId {
+                    if let rec = try FileRecord.fetchOne(db, sql: "SELECT * FROM file_record WHERE id = ?", arguments: [fid]) {
+                        let appSupport = Self.appSupportURL.path
+                        if rec.filePath.hasPrefix(appSupport) {
+                            try? FileManager.default.removeItem(atPath: rec.filePath)
+                        }
+                        if let thumb = rec.thumbnailPath {
+                            try? FileManager.default.removeItem(atPath: thumb)
+                        }
+                        try db.execute(sql: "DELETE FROM file_record WHERE id = ?", arguments: [fid])
+                    }
+                }
+
+                // highlight row (CASCADE deletes highlight_note + highlight_tag)
+                try db.execute(sql: "DELETE FROM highlight WHERE id = ?", arguments: [id])
+            }
+
+            NotificationCenter.default.post(
+                name: .highlightDidDelete,
+                object: nil,
+                userInfo: ["highlightId": id]
+            )
+            CaptureLog.info("Deleted highlight \(id)")
+        } catch {
+            CaptureLog.error("Failed to delete highlight \(id): \(error.localizedDescription)")
+        }
+    }
+
     func noteCountsForHighlights(ids: [String]) -> [String: Int] {
         guard let dbQueue, !ids.isEmpty else { return [:] }
         return (try? dbQueue.read { db in

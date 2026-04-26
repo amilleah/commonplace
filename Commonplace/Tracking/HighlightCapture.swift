@@ -11,6 +11,10 @@ extension Notification.Name {
     ///   - "highlightId": String — the row that changed
     ///   - "change": String — one of "tags", "notes", "userNote"
     static let highlightDataDidChange = Notification.Name("highlightDataDidChange")
+
+    /// Posted after a highlight and all its associated data are permanently deleted.
+    /// userInfo: ["highlightId": String]
+    static let highlightDidDelete = Notification.Name("highlightDidDelete")
 }
 
 final class HighlightCapture {

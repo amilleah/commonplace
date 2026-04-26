@@ -566,6 +566,12 @@ struct BrowseView: View {
                 loadCaptures(reset: true)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .highlightDidDelete)) { notification in
+            guard let hid = notification.userInfo?["highlightId"] as? String else { return }
+            highlights.removeAll { $0.id == hid }
+            if selectedHighlight?.id == hid { selectedHighlight = nil }
+            refreshSidebarData()
+        }
         .onReceive(NotificationCenter.default.publisher(for: BrowseWindowController.showSettingsNotification)) { _ in
             sidebarState.showSettings = true
         }

@@ -161,6 +161,10 @@ struct CardDetailView: View {
                             openFile(highlight.contentText); showConfirmation("Opened")
                         }
                     }
+                    InstantTooltipButton(icon: "trash", label: "Delete") {
+                        MaterialAction.delete(highlight)
+                        onDismiss?()
+                    }
                     InstantTooltipButton(icon: "xmark", label: "Close") {
                         onDismiss?()
                     }
