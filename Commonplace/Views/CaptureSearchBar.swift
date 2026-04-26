@@ -5,6 +5,10 @@ struct CaptureSearchBar: View {
     let count: Int
     @AppStorage("viewMode") private var viewMode = "grid"
 
+    private var countLabel: String {
+        count == 1 ? "1 capture" : "\(count) captures"
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -21,7 +25,7 @@ struct CaptureSearchBar: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text(count == 1 ? "1 capture" : "\(count) captures")
+            Text(countLabel)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             Divider().frame(height: 12)
@@ -31,6 +35,7 @@ struct CaptureSearchBar: View {
                 Image(systemName: viewMode == "grid" ? "list.bullet" : "square.grid.2x2")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
             }
             .buttonStyle(.plain)
         }
