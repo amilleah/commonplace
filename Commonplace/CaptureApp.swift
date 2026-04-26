@@ -79,9 +79,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ClipboardMonitor.shared.start()
         CaptureLog.info("Clipboard monitor started")
 
-        ScreenshotShortcutHandler.shared.start()
-        CaptureLog.info("Screenshot hotkeys registered")
-
         BrowseWindowController.shared.registerHotkey()
         CaptureLog.info("Browse hotkey registered")
 
@@ -157,7 +154,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if !AppEnvironment.isRunningUITests {
             FileMonitor.shared.stop()
-            ScreenshotShortcutHandler.shared.stop()
             ClipboardMonitor.shared.stop()
         }
 

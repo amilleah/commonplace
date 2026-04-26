@@ -168,6 +168,51 @@ final class ScreenshotCapture {
         }
     }
 
+    // MARK: - Desktop Screenshot Reference
+
+    /// Reference a macOS desktop screenshot in-place without copying it.
+    /// Reads the CGImage from the original path, runs OCR, and inserts a
+    /// ScreenshotRecord with captureType="desktop". The original file is not
+    /// moved or duplicated.
+    func referenceDesktopScreenshot(at fileURL: URL, context: CaptureContext) async -> CaptureResult? {
+        guard let imageSource = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            CaptureLog.error("ScreenshotCapture: failed to load desktop screenshot: \(fileURL.path)")
+            return nil
+        }
+
+        let now = Date()
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path))?[.size] as? Int64 ?? 0
+        let ocrText = await TextExtractor.shared.extract(from: cgImage)
+
+        var record = ScreenshotRecord(
+            timestamp: now.timeIntervalSince1970,
+            dayString: Self.dayString(for: now),
+            filePath: fileURL.path,
+            fileSize: fileSize,
+            displayId: String(CGMainDisplayID()),
+            ocrText: ocrText,
+            captureType: "desktop",
+            windowTitle: context.windowTitle,
+            bundleId: context.bundleId,
+            captureRect: nil,
+            scaleFactor: nil,
+            imageWidth: cgImage.width,
+            imageHeight: cgImage.height
+        )
+        db.insertScreenshot(&record)
+
+        CaptureLog.info("ScreenshotCapture: referenced desktop screenshot: \(fileURL.lastPathComponent)")
+
+        return CaptureResult(
+            cgImage: cgImage,
+            filePath: fileURL.path,
+            screenshotId: record.id,
+            ocrText: ocrText,
+            context: context
+        )
+    }
+
     // MARK: - Clipboard Image
 
     /// Save a raw image that came from the clipboard (e.g., Cmd+C on an image

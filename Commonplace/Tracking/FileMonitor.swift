@@ -37,6 +37,19 @@ final class FileMonitor {
 
     private static let desktopMigrationKey = "fileMonitorDesktopMigrated"
 
+    /// Where macOS saves screenshots — reads the system preference so we track
+    /// custom save locations, not just the default Desktop.
+    static var screenshotSaveLocation: String {
+        UserDefaults(suiteName: "com.apple.screencapture")?
+            .string(forKey: "location")
+            ?? (NSHomeDirectory() + "/Desktop")
+    }
+
+    /// Returns true if the filename matches the Apple screenshot naming pattern.
+    static func isDesktopScreenshot(_ fileName: String) -> Bool {
+        (fileName.hasPrefix("Screenshot ") || fileName.hasPrefix("Screen Shot ")) && fileName.hasSuffix(".png")
+    }
+
     func start() {
         // One-time migration: add Desktop to existing installs that only had Downloads
         if !UserDefaults.standard.bool(forKey: Self.desktopMigrationKey) {
@@ -54,6 +67,13 @@ final class FileMonitor {
         for folder in folders {
             startWatching(folder)
         }
+
+        // Also watch the macOS screenshot save folder if it's not already covered
+        let screenshotFolder = Self.screenshotSaveLocation
+        if !folders.contains(screenshotFolder) {
+            startWatching(screenshotFolder)
+        }
+
         CaptureLog.info("FileMonitor started watching \(folders.count) folder(s)")
     }
 
@@ -239,10 +259,38 @@ final class FileMonitor {
     // MARK: - Processing
 
     private func processNewFile(filePath: String, sourceFolder: String) {
-        // Dedup check
+        let url = URL(fileURLWithPath: filePath)
+        let fileName = url.lastPathComponent
+
+        // macOS desktop screenshots — reference in-place via ScreenshotCapture
+        // rather than copying to persistent storage.
+        if Self.isDesktopScreenshot(fileName) {
+            Task {
+                let context = CaptureContext.current()
+                guard let result = await ScreenshotCapture.shared.referenceDesktopScreenshot(
+                    at: url, context: context
+                ) else { return }
+
+                let toastImage = NSImage(
+                    cgImage: result.cgImage,
+                    size: NSSize(width: result.cgImage.width, height: result.cgImage.height)
+                )
+                await MainActor.run {
+                    HighlightCapture.shared.captureFromUserScreenshot(
+                        filePath: result.filePath,
+                        image: toastImage,
+                        screenshotId: result.screenshotId,
+                        context: result.context,
+                        badgeLabel: "Screenshot"
+                    )
+                }
+            }
+            return
+        }
+
+        // Dedup check for regular files
         guard db.fileRecordByPath(filePath) == nil else { return }
 
-        let url = URL(fileURLWithPath: filePath)
         let fm = FileManager.default
 
         guard let attrs = try? fm.attributesOfItem(atPath: filePath) else { return }
@@ -250,7 +298,6 @@ final class FileMonitor {
         let creationDate = (attrs[.creationDate] as? Date)?.timeIntervalSince1970
 
         let ext = url.pathExtension.lowercased()
-        let fileName = url.lastPathComponent
         let uti = UTType(filenameExtension: ext)?.identifier
         let contentType = Self.contentTypeCategory(from: ext, uti: uti)
         let now = Date()

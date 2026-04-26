@@ -62,10 +62,6 @@ final class PermissionsMonitor: ObservableObject {
         let axChanged = nextAX != accessibilityGranted
         accessibilityGranted = nextAX
 
-        if axChanged && nextAX {
-            ScreenshotShortcutHandler.shared.start()
-        }
-
         let preflight = CGPreflightScreenCaptureAccess()
         if preflight && !screenRecordingGranted {
             applyScreenState(true)

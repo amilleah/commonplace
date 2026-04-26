@@ -90,20 +90,16 @@ final class ClipboardMonitor: ObservableObject {
         guard pasteboard.changeCount != lastChangeCount else { return }
         lastChangeCount = pasteboard.changeCount
 
-        // Skip copies that originated inside Commonplace itself — the Copy
-        // button on a card, a selection-copy from an OCR block, or any
-        // internal copy action puts content back on the pasteboard that we'd
-        // otherwise re-ingest as a fresh capture. Using frontmostApplication
-        // at poll time is sufficient: you can't copy from an app you don't
-        // have focused, so any in-app copy is covered.
+        // Image first — checked before the frontmost-app guard so clipboard
+        // screenshots (Cmd+Ctrl+Shift+3/4) are captured even when Commonplace
+        // has focus. Plain text copies don't carry .png/.tiff reps, so this
+        // only fires on a deliberate image copy.
+        if tryCaptureImage(from: pasteboard) { return }
+
+        // Skip text copies that originated inside Commonplace itself.
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier {
             return
         }
-
-        // Image first — if the clipboard carries raw image bytes, save it as a
-        // screenshot. Plain text copies don't carry .png/.tiff reps, so this is
-        // a deliberate image copy (Preview, "Copy Image" in a browser, etc.).
-        if tryCaptureImage(from: pasteboard) { return }
 
         guard let content = pasteboard.string(forType: .string),
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
