@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 struct ClipboardEntry: Identifiable, Codable {
     let id: UUID
@@ -237,14 +238,32 @@ final class ClipboardMonitor: ObservableObject {
     }
 
     /// Read the first available image representation off the pasteboard.
-    /// Prefers PNG (lossless, universally decodable) over TIFF.
+    /// Prefers PNG (lossless, universally decodable) over TIFF. Falls back to
+    /// reading the file from disk when Finder copies an image file — in that
+    /// case the pasteboard carries only a file URL, not pixel data.
     private static func readImageData(from pasteboard: NSPasteboard) -> (Data, NSPasteboard.PasteboardType)? {
-        let types: [NSPasteboard.PasteboardType] = [.png, .tiff]
-        for type in types {
+        // Finder file copy: check file URL first. Finder also puts a .tiff icon
+        // preview on the pasteboard (lazily, so absent on the first copy but
+        // present on subsequent ones). Always reading from disk ensures we
+        // capture real pixels rather than the icon thumbnail on every copy.
+        if let fileURLs = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL],
+           let url = fileURLs.first,
+           let uti = UTType(filenameExtension: url.pathExtension.lowercased()),
+           uti.conforms(to: .image),
+           let data = try? Data(contentsOf: url), !data.isEmpty {
+            return (data, .png)
+        }
+
+        // Direct pixel data — "Copy Image" in Preview, browser, etc.
+        for type in [NSPasteboard.PasteboardType.png, .tiff] {
             if let data = pasteboard.data(forType: type), !data.isEmpty {
                 return (data, type)
             }
         }
+
         return nil
     }
 
