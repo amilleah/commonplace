@@ -1039,15 +1039,14 @@ private struct CardCoverPreview<Placeholder: View, Overlay: View>: View {
     }
 
     private var targetAspectRatio: CGFloat {
+        // Exact DB ratio keeps the card height stable before and after image load —
+        // no bucket snap means no jump when the image renders.
+        if let preferred = preferredAspectRatio { return preferred }
         let buckets = aspectRatioBuckets.isEmpty ? [fallbackAspectRatio] : aspectRatioBuckets.sorted()
-        let seededRatio = preferredAspectRatio ?? fallbackAspectRatio
-        guard let image else { return nearestAspectRatio(to: seededRatio, buckets: buckets) }
-        let size = image.size
-        guard size.width > 0, size.height > 0 else {
-            return nearestAspectRatio(to: seededRatio, buckets: buckets)
+        guard let image, image.size.width > 0, image.size.height > 0 else {
+            return nearestAspectRatio(to: fallbackAspectRatio, buckets: buckets)
         }
-        let rawAspectRatio = size.width / size.height
-        return nearestAspectRatio(to: rawAspectRatio, buckets: buckets)
+        return nearestAspectRatio(to: image.size.width / image.size.height, buckets: buckets)
     }
 
     private func nearestAspectRatio(to rawValue: CGFloat, buckets: [CGFloat]) -> CGFloat {
