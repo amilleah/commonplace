@@ -250,7 +250,15 @@ struct NoteRow: View {
 
 struct BrowseView: View {
 
-    // MARK: - State
+    // MARK: - Injected sidebar state + data
+
+    @ObservedObject var sidebarState: SidebarState
+    @Binding var appFacets: [AppFacet]
+    @Binding var allTags: [Tag]
+    @Binding var tagCounts: [String: Int]
+    @Binding var typeCounts: [String: Int]
+
+    // MARK: - Local state
 
     @State private var isActive = false
     @State private var searchText = ""
@@ -259,17 +267,8 @@ struct BrowseView: View {
     @State private var highlightsOffset = 0
     @State private var noteCounts: [String: Int] = [:]
     @State private var highlightTags: [String: [Tag]] = [:]
-    @State private var selectedFilter: CaptureFilter = .all
-    @State private var selectedApp: String? = nil
-    @State private var selectedTagIds: Set<String> = []
-    @State private var appFacets: [AppFacet] = []
-    @State private var allTags: [Tag] = []
-    @State private var tagCounts: [String: Int] = [:]
-    // Scroll position managed by SwiftUI's default behavior
-    @State private var typeCounts: [String: Int] = [:]
     @State private var isDropTargeted = false
     @State private var pinnedOrigin: PinnedOrigin? = nil
-    @State private var showSettings = false
     @State private var hasMore = false
     private let pageSize = 50
 
@@ -285,17 +284,13 @@ struct BrowseView: View {
     }
 
     private func navigateToTag(from origin: Highlight, tag: Tag) {
-        // Dismiss detail view (if currently open).
         selectedHighlight = nil
-        // Remember where we came from so we can pin it.
         pinnedOrigin = PinnedOrigin(highlight: origin, targetTagId: tag.id)
-        // Switch the sidebar filter to this single tag (mutually exclusive
-        // with type/app per the single-select sidebar logic).
-        selectedFilter = .all
-        selectedApp = nil
+        sidebarState.selectedFilter = .all
+        sidebarState.selectedApp = nil
         searchText = ""
-        selectedTagIds = [tag.id]
-        // loadCaptures triggered by onChange(of: selectedTagIds)
+        sidebarState.selectedTagIds = [tag.id]
+        // loadCaptures triggered by onChange(of: sidebarState.selectedTagIds)
     }
 
     @ViewBuilder
@@ -345,9 +340,9 @@ struct BrowseView: View {
     private var browseLoadRequest: BrowseLoadRequest {
         BrowseLoadRequest(
             searchText: searchText,
-            selectedFilter: selectedFilter,
-            selectedApp: selectedApp,
-            selectedTagIds: selectedTagIds
+            selectedFilter: sidebarState.selectedFilter,
+            selectedApp: sidebarState.selectedApp,
+            selectedTagIds: sidebarState.selectedTagIds
         )
     }
 
@@ -382,51 +377,14 @@ struct BrowseView: View {
     /// buckets based on how they were captured), so "add to Screenshots" or
     /// "add to app = Chrome" is semantically meaningless there.
     private var showAddTile: Bool {
-        selectedFilter == .all && selectedApp == nil && !showSettings
+        sidebarState.selectedFilter == .all && sidebarState.selectedApp == nil && !sidebarState.showSettings
     }
 
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 0) {
-            CaptureFilterSidebar(
-                appFacets: appFacets,
-                allTags: allTags,
-                tagCounts: tagCounts,
-                typeCounts: typeCounts,
-                selectedApp: $selectedApp,
-                selectedFilter: $selectedFilter,
-                selectedTagIds: $selectedTagIds,
-                showSettings: $showSettings
-            )
-            .onChange(of: selectedApp) { _, _ in
-                guard isActive else { return }
-                pinnedOrigin = nil
-                loadCaptures(reset: true)
-            }
-            .onChange(of: selectedFilter) { _, _ in
-                guard isActive else { return }
-                pinnedOrigin = nil
-                loadCaptures(reset: true)
-            }
-            .onChange(of: selectedTagIds) { _, newValue in
-                guard isActive else { return }
-                // Clear the pin whenever the tag filter is changed through any
-                // path other than navigateToTag() — in navigateToTag the new
-                // Set always matches the pin's target id so this is a no-op.
-                if let pinned = pinnedOrigin, newValue != Set([pinned.targetTagId]) {
-                    pinnedOrigin = nil
-                }
-                loadCaptures(reset: true)
-            }
-            .onChange(of: searchText) { _, _ in
-                guard isActive else { return }
-                loadCaptures(reset: true)
-            }
-
-            Divider()
-
-            if showSettings {
+        Group {
+            if sidebarState.showSettings {
                 ScrollView {
                     SettingsView()
                         .frame(maxWidth: 500)
@@ -472,7 +430,7 @@ struct BrowseView: View {
                     ScrollView {
                         MasonryLayout(minColumnWidth: 260, spacing: 14, pinFirst: showAddTile) {
                             if showAddTile {
-                                AddTile(tagIds: Array(selectedTagIds))
+                                AddTile(tagIds: Array(sidebarState.selectedTagIds))
                             }
                             ForEach(filteredHighlights) { highlight in
                                 MasonryCard(
@@ -504,27 +462,7 @@ struct BrowseView: View {
                 }
 
                 Divider()
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    TextField("Search...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.callout)
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Text("\(filteredHighlights.count) captures")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                CaptureSearchBar(searchText: $searchText, count: filteredHighlights.count)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -552,7 +490,28 @@ struct BrowseView: View {
                 }
             }
 
-            } // end else (showSettings)
+            }
+        }
+        .onChange(of: sidebarState.selectedApp) { _, _ in
+            guard isActive else { return }
+            pinnedOrigin = nil
+            loadCaptures(reset: true)
+        }
+        .onChange(of: sidebarState.selectedFilter) { _, _ in
+            guard isActive else { return }
+            pinnedOrigin = nil
+            loadCaptures(reset: true)
+        }
+        .onChange(of: sidebarState.selectedTagIds) { _, newValue in
+            guard isActive else { return }
+            if let pinned = pinnedOrigin, newValue != Set([pinned.targetTagId]) {
+                pinnedOrigin = nil
+            }
+            loadCaptures(reset: true)
+        }
+        .onChange(of: searchText) { _, _ in
+            guard isActive else { return }
+            loadCaptures(reset: true)
         }
         .onAppear {
             isActive = true
@@ -608,25 +567,22 @@ struct BrowseView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: BrowseWindowController.showSettingsNotification)) { _ in
-            showSettings = true
+            sidebarState.showSettings = true
         }
         .onReceive(NotificationCenter.default.publisher(for: BrowseWindowController.showTagFilterNotification)) { notification in
             guard let tagId = notification.userInfo?["tagId"] as? String else { return }
-            selectedFilter = .all
-            selectedApp = nil
+            sidebarState.selectedFilter = .all
+            sidebarState.selectedApp = nil
             searchText = ""
             isActive = true
-            selectedTagIds = [tagId]
-            // loadCaptures triggered by onChange(of: selectedTagIds)
+            sidebarState.selectedTagIds = [tagId]
         }
         .onReceive(NotificationCenter.default.publisher(for: BrowseWindowController.showHighlightDetailNotification)) { notification in
             guard let highlightId = notification.userInfo?["highlightId"] as? String,
                   let highlight = DatabaseManager.shared.highlight(byId: highlightId) else { return }
-            // Reset sidebar to "All" so the item is visible in the background list
-            // once the detail overlay is dismissed.
-            selectedFilter = .all
-            selectedApp = nil
-            selectedTagIds = []
+            sidebarState.selectedFilter = .all
+            sidebarState.selectedApp = nil
+            sidebarState.selectedTagIds = []
             searchText = ""
             isActive = true
             loadCaptures(reset: true)
@@ -735,7 +691,7 @@ struct BrowseView: View {
 
         // Snapshot the current tag filter at drop time so any tag change
         // mid-import doesn't race with the async import pipeline.
-        let inheritedTagIds = Array(selectedTagIds)
+        let inheritedTagIds = Array(sidebarState.selectedTagIds)
 
         for provider in providers {
             provider.loadFileRepresentation(forTypeIdentifier: UTType.item.identifier) { url, error in

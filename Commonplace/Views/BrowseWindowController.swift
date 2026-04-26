@@ -58,7 +58,7 @@ final class BrowseWindowController: NSObject, NSWindowDelegate, ManagedWindowCon
             w.isMovableByWindowBackground = false
             w.delegate = self
             w.collectionBehavior = [.moveToActiveSpace]
-            let hc = NSHostingController(rootView: BrowseView())
+            let hc = NSHostingController(rootView: RootContentView())
             hc.sizingOptions = []
             w.contentViewController = hc
 

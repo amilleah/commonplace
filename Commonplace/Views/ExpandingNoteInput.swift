@@ -25,7 +25,7 @@ struct ExpandingNoteInput: NSViewRepresentable {
         sv.drawsBackground = false
         sv.preferredHeight = Self.minHeight
 
-        let tv = NoteTextView()
+        let tv = PlaceholderTextView()
         tv.isRichText = false
         tv.allowsUndo = true
         tv.font = Self.font
@@ -45,7 +45,7 @@ struct ExpandingNoteInput: NSViewRepresentable {
     }
 
     func updateNSView(_ sv: ExpandingScrollView, context: Context) {
-        guard let tv = sv.documentView as? NoteTextView else { return }
+        guard let tv = sv.documentView as? PlaceholderTextView else { return }
         if tv.string != text {
             tv.string = text
             tv.needsDisplay = true
@@ -104,7 +104,7 @@ final class ExpandingScrollView: NSScrollView {
     }
 }
 
-private final class NoteTextView: NSTextView {
+private final class PlaceholderTextView: NSTextView {
     var placeholderString = ""
 
     override func draw(_ dirtyRect: NSRect) {
