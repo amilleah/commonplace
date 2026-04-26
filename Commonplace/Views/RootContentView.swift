@@ -4,6 +4,7 @@ import SwiftUI
 /// `CaptureFilterSidebar` persists across view switches without flickering.
 struct RootContentView: View {
     @StateObject private var sidebarState = SidebarState()
+    @AppStorage("viewMode") private var viewMode = "grid"
 
     @State private var appFacets: [AppFacet] = []
     @State private var allTags: [Tag] = []
@@ -25,13 +26,23 @@ struct RootContentView: View {
 
             Divider()
 
-            BrowseView(
-                sidebarState: sidebarState,
-                appFacets: $appFacets,
-                allTags: $allTags,
-                tagCounts: $tagCounts,
-                typeCounts: $typeCounts
-            )
+            if viewMode == "timeline" {
+                TimelineView(
+                    sidebarState: sidebarState,
+                    appFacets: $appFacets,
+                    allTags: $allTags,
+                    tagCounts: $tagCounts,
+                    typeCounts: $typeCounts
+                )
+            } else {
+                BrowseView(
+                    sidebarState: sidebarState,
+                    appFacets: $appFacets,
+                    allTags: $allTags,
+                    tagCounts: $tagCounts,
+                    typeCounts: $typeCounts
+                )
+            }
         }
     }
 }

@@ -128,9 +128,13 @@ struct AddTile: View {
 
 // MARK: - Add Button (full-width footer, shown only when text is present)
 
-private struct AddButton: View {
+struct AddButton: View {
     let action: () -> Void
     @State private var isHovered = false
+
+    init(action: @escaping () -> Void) {
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -148,4 +152,3 @@ private struct AddButton: View {
         }
     }
 }
-
