@@ -38,6 +38,8 @@ struct TimelineView: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             if sessions.isEmpty {
                                 TimelineNoteComposer(tagIds: Array(sidebarState.selectedTagIds))
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
                                 emptyState
                             } else {
                                 ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
@@ -154,17 +156,7 @@ struct TimelineView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer().frame(height: 60)
-            Image(systemName: "clock")
-                .font(.system(size: 36))
-                .foregroundStyle(.quaternary)
-            Text("No captures yet")
-                .foregroundStyle(.secondary)
-                .font(.callout)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
+        EmptyView()
     }
 
     // MARK: - Data
@@ -342,7 +334,7 @@ private struct TimelineNoteComposer: View {
                 VStack(spacing: 8) {
                     Spacer(minLength: 0)
                     Image(systemName: "plus")
-                        .font(.system(size: 22, weight: .light))
+                        .font(.system(size: 28, weight: .light))
                         .foregroundStyle(.tertiary)
                     Text("Add note")
                         .font(.caption)
