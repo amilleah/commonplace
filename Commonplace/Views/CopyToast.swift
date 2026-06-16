@@ -190,6 +190,27 @@ final class CopyToastController: ManagedWindowController {
                 DatabaseManager.shared.addTag(tagId, toHighlight: entryId)
             }
         }
+        target.onNewCollection = { [weak self] in
+            guard let self, let entryId = self.currentEntryId else { return }
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = ""
+                alert.addButton(withTitle: "Create")
+                alert.addButton(withTitle: "Cancel")
+                let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+                field.placeholderString = "Collection name"
+                alert.accessoryView = field
+                alert.window.initialFirstResponder = field
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty,
+                      let tag = DatabaseManager.shared.findOrCreateTag(name: name) else { return }
+                DatabaseManager.shared.addTag(tag.id, toHighlight: entryId)
+                NotificationCenter.default.post(name: .highlightDataDidChange,
+                                                object: nil,
+                                                userInfo: ["highlightId": entryId, "change": "tags"])
+            }
+        }
         target.onDismiss = { [weak self] in self?.dismiss(animated: true) }
         self.menuTarget = target
 

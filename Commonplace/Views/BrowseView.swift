@@ -260,6 +260,10 @@ struct BrowseView: View {
 
     // MARK: - Local state
 
+    @AppStorage("cardMinColumnWidth") private var minColumnWidth: Double = 260
+    private let minColumnWidthRange: ClosedRange<Double> = 160...520
+    private let zoomStep: Double = 40
+
     @State private var isActive = false
     @State private var searchText = ""
     @State private var selectedHighlight: Highlight?
@@ -428,7 +432,7 @@ struct BrowseView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
-                        MasonryLayout(minColumnWidth: 260, spacing: 14, pinFirst: showAddTile) {
+                        MasonryLayout(minColumnWidth: minColumnWidth, spacing: 14, pinFirst: showAddTile) {
                             if showAddTile {
                                 AddTile(tagIds: Array(sidebarState.selectedTagIds))
                             }
@@ -491,6 +495,15 @@ struct BrowseView: View {
             }
 
             }
+        }
+        .background {
+            Group {
+                Button("") { minColumnWidth = min(minColumnWidth + zoomStep, minColumnWidthRange.upperBound) }
+                    .keyboardShortcut("+", modifiers: .command)
+                Button("") { minColumnWidth = max(minColumnWidth - zoomStep, minColumnWidthRange.lowerBound) }
+                    .keyboardShortcut("-", modifiers: .command)
+            }
+            .hidden()
         }
         .onChange(of: sidebarState.selectedApp) { _, _ in
             guard isActive else { return }

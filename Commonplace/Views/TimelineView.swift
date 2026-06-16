@@ -43,6 +43,32 @@ struct TimelineView: View {
     private let pageSize = 100
 
     @State private var selectedHighlight: Highlight?
+    @State private var highlightTags:  [String: [Tag]] = [:]
+    @State private var laneGraph:      LaneGraph        = .empty
+    @State private var nodePositions:  [Int: CGFloat]   = [:]
+
+    /// True when the user is viewing a specific tag collection.
+    private var isTagFiltered: Bool { !sidebarState.selectedTagIds.isEmpty }
+
+    /// When exactly one collection is active, returns its lane colour so the
+    /// spine can be tinted to represent that thread directly.
+    private var filterSpineColor: Color? {
+        guard sidebarState.selectedTagIds.count == 1,
+              let tagId = sidebarState.selectedTagIds.first,
+              let lane  = laneGraph.lanes.first(where: { $0.tag.id == tagId })
+        else { return nil }
+        return lane.color
+    }
+
+    /// Rebuild the lane graph from current session + tag data.
+    /// Call whenever `highlights`, `highlightTags`, or `selectedTagIds` change.
+    private func rebuildLaneGraph() {
+        laneGraph = LaneGraph(
+            sessions:      sessions,
+            tagMap:        highlightTags,
+            selectedTagIds: sidebarState.selectedTagIds
+        )
+    }
 
     // Multi-selection
     @StateObject private var selection = SelectionManager()
@@ -50,6 +76,8 @@ struct TimelineView: View {
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
     @State private var dragCmdHeld = false
+    @State private var showNewCollectionAlert = false
+    @State private var newCollectionName = ""
 
     private var sessions: [TimelineSession] { groupIntoSessions(highlights) }
 
@@ -105,6 +133,11 @@ struct TimelineView: View {
                 .environmentObject(selection)
             }
         }
+        .alert("", isPresented: $showNewCollectionAlert) {
+            TextField("Collection name", text: $newCollectionName)
+            Button("Create") { bulkCreateAndAddCollection() }
+            Button("Cancel", role: .cancel) {}
+        }
         .onChange(of: sidebarState.selectedFilter) { _, _ in guard isActive else { return }; loadHighlights(reset: true) }
         .onChange(of: sidebarState.selectedApp)    { _, _ in guard isActive else { return }; loadHighlights(reset: true) }
         .onChange(of: sidebarState.selectedTagIds) { _, _ in guard isActive else { return }; loadHighlights(reset: true) }
@@ -130,10 +163,13 @@ struct TimelineView: View {
             .receive(on: DispatchQueue.main)) { _ in
             guard isActive else { return }
             refreshSidebarData()
+            refreshHighlightTags()
         }
         .onReceive(NotificationCenter.default.publisher(for: .highlightDidDelete)) { notification in
             guard let hid = notification.userInfo?["highlightId"] as? String else { return }
             highlights.removeAll { $0.id == hid }
+            highlightTags.removeValue(forKey: hid)
+            rebuildLaneGraph()
             if selectedHighlight?.id == hid { selectedHighlight = nil }
             selection.selectedIds.remove(hid)
             refreshSidebarData()
@@ -155,7 +191,7 @@ struct TimelineView: View {
 
     private var scrollContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 if sessions.isEmpty {
                     TimelineNoteComposer(tagIds: Array(sidebarState.selectedTagIds))
                         .padding(.horizontal, 16)
@@ -164,11 +200,13 @@ struct TimelineView: View {
                 } else {
                     ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
                         SessionRow(
-                            session: session,
-                            labelText: sessionLabel(for: session.date),
-                            noteTagIds: Array(sidebarState.selectedTagIds),
-                            showsComposer: index == 0,
-                            showsTopConnector: index > 0,
+                            session:              session,
+                            sessionIndex:         index,
+                            spineColor:           filterSpineColor,
+                            labelText:            sessionLabel(for: session.date),
+                            noteTagIds:           Array(sidebarState.selectedTagIds),
+                            showsComposer:        index == 0,
+                            showsTopConnector:    index > 0,
                             showsBottomConnector: index < sessions.count - 1,
                             onSelect: { h in
                                 withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = h }
@@ -177,8 +215,21 @@ struct TimelineView: View {
                     }
                 }
             }
+            .coordinateSpace(name: "timeline")
             .padding(.bottom, 16)
+            // Single canvas drawn over the full content area — moves with scroll.
+            // Uses real Y coordinates from SessionNodeKey preferences.
+            .overlay(alignment: .topLeading) {
+                LaneCanvas(
+                    graph:         laneGraph,
+                    nodePositions: nodePositions,
+                    spineX:        26,
+                    hideSpine:     isTagFiltered
+                )
+                .frame(width: 26)
+            }
         }
+        .onPreferenceChange(SessionNodeKey.self) { nodePositions = $0 }
         .onScrollGeometryChange(for: Bool.self) { geo in
             let bottomEdge = geo.contentOffset.y + geo.containerSize.height
             return bottomEdge >= geo.contentSize.height - 400
@@ -224,9 +275,11 @@ struct TimelineView: View {
             }
 
             Menu {
-                if allTags.isEmpty {
-                    Text("No collections yet")
-                } else {
+                Button(action: { newCollectionName = ""; showNewCollectionAlert = true }) {
+                    Label("New Collection…", systemImage: "folder.badge.plus")
+                }
+                if !allTags.isEmpty {
+                    Divider()
                     ForEach(allTags) { tag in
                         Button(tag.name) { bulkAddTag(tag) }
                     }
@@ -315,6 +368,8 @@ struct TimelineView: View {
             DatabaseManager.shared.deleteHighlight(id: id)
         }
         highlights.removeAll { ids.contains($0.id) }
+        ids.forEach { highlightTags.removeValue(forKey: $0) }
+        rebuildLaneGraph()
         if let sh = selectedHighlight, ids.contains(sh.id) { selectedHighlight = nil }
         selection.clear()
         refreshSidebarData()
@@ -325,6 +380,14 @@ struct TimelineView: View {
             DatabaseManager.shared.addTag(tag.id, toHighlight: id)
         }
         NotificationCenter.default.post(name: .highlightDataDidChange, object: nil)
+    }
+
+    private func bulkCreateAndAddCollection() {
+        let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              let tag = DatabaseManager.shared.findOrCreateTag(name: name) else { return }
+        bulkAddTag(tag)
+        newCollectionName = ""
     }
 
     private func bulkRemoveFromCollection(_ tagId: String) {
@@ -363,17 +426,35 @@ struct TimelineView: View {
 
     private func loadHighlights(reset: Bool) {
         guard isActive else { return }
-        if reset { highlightsOffset = 0; highlights = []; hasMore = false }
+        if reset { highlightsOffset = 0; highlights = []; hasMore = false; highlightTags = [:] }
         let request = loadRequest
         let offset = highlightsOffset
         let limit = pageSize
         Task.detached(priority: .userInitiated) {
-            let batch = DatabaseManager.shared.browseHighlights(request, offset: offset, limit: limit)
+            let batch  = DatabaseManager.shared.browseHighlights(request, offset: offset, limit: limit)
+            let tagMap = DatabaseManager.shared.tagsForHighlights(ids: batch.map(\.id))
             await MainActor.run {
                 let existingIds = Set(highlights.map(\.id))
                 highlights.append(contentsOf: batch.filter { !existingIds.contains($0.id) })
                 highlightsOffset += batch.count
                 hasMore = batch.count == limit
+                highlightTags.merge(tagMap) { _, newer in newer }
+                rebuildLaneGraph()
+            }
+        }
+    }
+
+    /// Re-fetches tags for all currently-loaded highlights and updates the tag map.
+    /// Called after a tag is added/removed so the lane visualization stays current.
+    private func refreshHighlightTags() {
+        let ids = highlights.map(\.id)
+        guard !ids.isEmpty else { return }
+        Task.detached(priority: .userInitiated) {
+            let tagMap = DatabaseManager.shared.tagsForHighlights(ids: ids)
+            await MainActor.run {
+                // Replace each highlight's entry so removed tags don't linger
+                for id in ids { highlightTags[id] = tagMap[id] ?? [] }
+                rebuildLaneGraph()
             }
         }
     }
@@ -424,26 +505,27 @@ private func groupIntoSessions(_ highlights: [Highlight]) -> [TimelineSession] {
 // MARK: - Session row (label + horizontal strip of cards)
 
 private struct SessionRow: View {
-    let session: TimelineSession
-    let labelText: String
-    let noteTagIds: [String]
-    let showsComposer: Bool
-    let showsTopConnector: Bool
+    let session:              TimelineSession
+    let sessionIndex:         Int
+    /// Non-nil when a single collection is active: tints the spine with the collection colour.
+    let spineColor:           Color?
+    let labelText:            String
+    let noteTagIds:           [String]
+    let showsComposer:        Bool
+    let showsTopConnector:    Bool
     let showsBottomConnector: Bool
-    let onSelect: (Highlight) -> Void
-
-    private let dotSize: CGFloat = 7
-    private let dotTopInset: CGFloat = 20
+    let onSelect:             (Highlight) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Spine
+            // Spine is always visible. When a collection is active its colour
+            // replaces the default grey, making the spine the coloured thread.
             VStack(spacing: 0) {
                 connectorSegment(visible: showsTopConnector)
-                    .frame(height: dotTopInset)
+                    .frame(height: SpineLayout.dotTopInset)
                 Circle()
-                    .fill(Color.primary.opacity(0.2))
-                    .frame(width: dotSize, height: dotSize)
+                    .fill(spineColor ?? Color.primary.opacity(0.2))
+                    .frame(width: SpineLayout.dotSize, height: SpineLayout.dotSize)
                 connectorSegment(visible: showsBottomConnector)
                     .frame(maxHeight: .infinity)
             }
@@ -470,17 +552,28 @@ private struct SessionRow: View {
             }
             .padding(.leading, 12)
         }
+        // Report this row's spine-node Y to LaneCanvas via preference.
+        // Uses the row's own top edge + the fixed dotCenterY inset so the
+        // position is correct even when the spine VStack is hidden.
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: SessionNodeKey.self,
+                    value: [sessionIndex: geo.frame(in: .named("timeline")).minY
+                                          + SpineLayout.dotCenterY]
+                )
+            }
+        )
     }
 
     @ViewBuilder
     private func connectorSegment(visible: Bool) -> some View {
         if visible {
             Rectangle()
-                .fill(Color.primary.opacity(0.08))
+                .fill(spineColor.map { $0.opacity(0.35) } ?? Color.primary.opacity(0.08))
                 .frame(width: 1)
         } else {
-            Color.clear
-                .frame(width: 1)
+            Color.clear.frame(width: 1)
         }
     }
 }

@@ -104,6 +104,9 @@ struct MaterialContextMenuModifier: ViewModifier {
     let highlight: Highlight
     let cardTags: [Tag]
 
+    @State private var showNewCollectionAlert = false
+    @State private var newCollectionName = ""
+
     func body(content: Content) -> some View {
         content.contextMenu {
             Button(action: { MaterialAction.copy(highlight) }) {
@@ -127,18 +130,28 @@ struct MaterialContextMenuModifier: ViewModifier {
             Divider()
 
             Menu("Collection") {
-                ForEach(DatabaseManager.shared.allTags()) { tag in
-                    let isApplied = cardTags.contains(where: { $0.id == tag.id })
-                    Button(action: {
-                        if isApplied {
-                            DatabaseManager.shared.removeTag(tag.id, fromHighlight: highlight.id)
-                        } else {
-                            DatabaseManager.shared.addTag(tag.id, toHighlight: highlight.id)
-                        }
-                    }) {
-                        HStack {
-                            Text(tag.name)
-                            if isApplied { Image(systemName: "checkmark") }
+                Button(action: { newCollectionName = ""; showNewCollectionAlert = true }) {
+                    Label("New Collection…", systemImage: "folder.badge.plus")
+                }
+                let allTags = DatabaseManager.shared.allTags()
+                if !allTags.isEmpty {
+                    Divider()
+                    ForEach(allTags) { tag in
+                        let isApplied = cardTags.contains(where: { $0.id == tag.id })
+                        Button(action: {
+                            if isApplied {
+                                DatabaseManager.shared.removeTag(tag.id, fromHighlight: highlight.id)
+                            } else {
+                                DatabaseManager.shared.addTag(tag.id, toHighlight: highlight.id)
+                            }
+                            NotificationCenter.default.post(name: .highlightDataDidChange,
+                                                            object: nil,
+                                                            userInfo: ["highlightId": highlight.id, "change": "tags"])
+                        }) {
+                            HStack {
+                                Text(tag.name)
+                                if isApplied { Image(systemName: "checkmark") }
+                            }
                         }
                     }
                 }
@@ -152,6 +165,22 @@ struct MaterialContextMenuModifier: ViewModifier {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .alert("", isPresented: $showNewCollectionAlert) {
+            TextField("Collection name", text: $newCollectionName)
+            Button("Create") { createAndAddNewCollection() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func createAndAddNewCollection() {
+        let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              let tag = DatabaseManager.shared.findOrCreateTag(name: name) else { return }
+        DatabaseManager.shared.addTag(tag.id, toHighlight: highlight.id)
+        NotificationCenter.default.post(name: .highlightDataDidChange,
+                                        object: nil,
+                                        userInfo: ["highlightId": highlight.id, "change": "tags"])
+        newCollectionName = ""
     }
 
     @ViewBuilder
@@ -181,6 +210,7 @@ final class MaterialMenuTarget: NSObject {
     var onRevealInFinder: (() -> Void)?
     var onShare: ((NSView) -> Void)?
     var onToggleTag: ((String) -> Void)?
+    var onNewCollection: (() -> Void)?
     var onDelete: (() -> Void)?
     var onDismiss: (() -> Void)?
 
@@ -195,6 +225,7 @@ final class MaterialMenuTarget: NSObject {
         guard let tagId = sender.representedObject as? String else { return }
         onToggleTag?(tagId)
     }
+    @objc func newCollection() { onNewCollection?() }
     @objc func deleteMaterial() { onDelete?() }
     @objc func dismissToast() { onDismiss?() }
 }
@@ -241,13 +272,18 @@ func buildMaterialNSMenu(
     menu.addItem(.separator())
 
     let collMenu = NSMenu()
+
+    let newCollItem = NSMenuItem(title: "New Collection…",
+                                 action: #selector(MaterialMenuTarget.newCollection),
+                                 keyEquivalent: "")
+    newCollItem.target = target
+    newCollItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
+    collMenu.addItem(newCollItem)
+
     let applied = Set(DatabaseManager.shared.tagsForHighlight(id: highlight.id).map { $0.id })
     let tags = DatabaseManager.shared.allTags()
-    if tags.isEmpty {
-        let empty = NSMenuItem(title: "No collections yet", action: nil, keyEquivalent: "")
-        empty.isEnabled = false
-        collMenu.addItem(empty)
-    } else {
+    if !tags.isEmpty {
+        collMenu.addItem(.separator())
         for tag in tags {
             let item = NSMenuItem(title: tag.name,
                                   action: #selector(MaterialMenuTarget.toggleTag(_:)),
