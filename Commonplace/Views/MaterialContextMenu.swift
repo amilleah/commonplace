@@ -76,6 +76,14 @@ enum MaterialAction {
         }
     }
 
+    static func openIcon(for highlight: Highlight) -> String {
+        switch highlight.highlightType {
+        case "recording": return "play.rectangle"
+        case "file":      return "arrow.up.forward.app"
+        default:          return highlight.isURLCopy ? "safari" : "arrow.up.forward.app"
+        }
+    }
+
     static func delete(_ highlight: Highlight) {
         DatabaseManager.shared.deleteHighlight(id: highlight.id)
     }
@@ -98,13 +106,13 @@ struct MaterialContextMenuModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.contextMenu {
-            Button(MaterialAction.copyLabel(for: highlight)) {
-                MaterialAction.copy(highlight)
+            Button(action: { MaterialAction.copy(highlight) }) {
+                Label(MaterialAction.copyLabel(for: highlight), systemImage: "doc.on.doc")
             }
 
             if MaterialAction.openTarget(for: highlight) != nil {
-                Button(MaterialAction.openLabel(for: highlight)) {
-                    MaterialAction.open(highlight)
+                Button(action: { MaterialAction.open(highlight) }) {
+                    Label(MaterialAction.openLabel(for: highlight), systemImage: MaterialAction.openIcon(for: highlight))
                 }
             }
 
@@ -203,6 +211,7 @@ func buildMaterialNSMenu(
                               action: #selector(MaterialMenuTarget.copyMaterial),
                               keyEquivalent: "")
     copyItem.target = target
+    copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
     menu.addItem(copyItem)
 
     if MaterialAction.openTarget(for: highlight) != nil {
@@ -210,6 +219,7 @@ func buildMaterialNSMenu(
                                   action: #selector(MaterialMenuTarget.openMaterial),
                                   keyEquivalent: "")
         openItem.target = target
+        openItem.image = NSImage(systemSymbolName: MaterialAction.openIcon(for: highlight), accessibilityDescription: nil)
         menu.addItem(openItem)
     }
 
