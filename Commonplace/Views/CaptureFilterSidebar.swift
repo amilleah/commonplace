@@ -202,6 +202,21 @@ struct CaptureFilterSidebar: View {
             }
             .disabled(!CollectionPublisher.shared.isConfigured)
         }
+        Divider()
+        Button(role: .destructive) {
+            deleteCollection(tag)
+        } label: {
+            Label("Delete Collection", systemImage: "trash")
+        }
+    }
+
+    private func deleteCollection(_ tag: Tag) {
+        if selectedTagIds.contains(tag.id) {
+            selectedTagIds.remove(tag.id)
+            if selectedTagIds.isEmpty { selectedFilter = .all }
+        }
+        DatabaseManager.shared.deleteTag(id: tag.id)
+        NotificationCenter.default.post(name: .highlightDataDidChange, object: nil, userInfo: ["change": "tags"])
     }
 
     private func cancelRename() {

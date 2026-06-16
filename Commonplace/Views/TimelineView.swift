@@ -214,6 +214,15 @@ struct TimelineView: View {
 
             Spacer()
 
+            if sidebarState.selectedTagIds.count == 1, let tagId = sidebarState.selectedTagIds.first {
+                Button {
+                    bulkRemoveFromCollection(tagId)
+                } label: {
+                    Label("Remove from Collection", systemImage: "folder.badge.minus")
+                        .font(.system(size: 12))
+                }
+            }
+
             Menu {
                 if allTags.isEmpty {
                     Text("No collections yet")
@@ -316,6 +325,16 @@ struct TimelineView: View {
             DatabaseManager.shared.addTag(tag.id, toHighlight: id)
         }
         NotificationCenter.default.post(name: .highlightDataDidChange, object: nil)
+    }
+
+    private func bulkRemoveFromCollection(_ tagId: String) {
+        let ids = selection.selectedIds
+        for id in ids {
+            DatabaseManager.shared.removeTag(tagId, fromHighlight: id)
+        }
+        highlights.removeAll { ids.contains($0.id) }
+        selection.clear()
+        refreshSidebarData()
     }
 
     // MARK: - Helpers
