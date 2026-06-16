@@ -3,6 +3,29 @@ import AVKit
 import PDFKit
 import Combine
 
+// MARK: - SelectionManager
+
+final class SelectionManager: ObservableObject {
+    @Published var selectedIds: Set<String> = []
+
+    func toggle(_ id: String) {
+        if selectedIds.contains(id) { selectedIds.remove(id) } else { selectedIds.insert(id) }
+    }
+    func clear() { selectedIds.removeAll() }
+    func set(_ ids: Set<String>) { selectedIds = ids }
+    var isEmpty: Bool { selectedIds.isEmpty }
+    var count: Int { selectedIds.count }
+}
+
+// MARK: - CardFrameKey
+
+private struct CardFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
 // MARK: - TimelineView
 
 struct TimelineView: View {
@@ -21,6 +44,13 @@ struct TimelineView: View {
 
     @State private var selectedHighlight: Highlight?
 
+    // Multi-selection
+    @StateObject private var selection = SelectionManager()
+    @State private var cardFrames: [String: CGRect] = [:]
+    @State private var dragStart: CGPoint?
+    @State private var dragCurrent: CGPoint?
+    @State private var dragCmdHeld = false
+
     private var sessions: [TimelineSession] { groupIntoSessions(highlights) }
 
     var body: some View {
@@ -34,69 +64,45 @@ struct TimelineView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 0) {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            if sessions.isEmpty {
-                                TimelineNoteComposer(tagIds: Array(sidebarState.selectedTagIds))
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                emptyState
-                            } else {
-                                ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                                    SessionRow(
-                                        session: session,
-                                        labelText: sessionLabel(for: session.date),
-                                        noteTagIds: Array(sidebarState.selectedTagIds),
-                                        showsComposer: index == 0,
-                                        showsTopConnector: index > 0,
-                                        showsBottomConnector: index < sessions.count - 1,
-                                        onSelect: { h in
-                                            withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = h }
-                                        }
-                                    )
+                    scrollContent
+                        .onPreferenceChange(CardFrameKey.self) { cardFrames = $0 }
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                                .onChanged { val in
+                                    if dragStart == nil {
+                                        let onCard = cardFrames.values.contains { $0.contains(val.startLocation) }
+                                        guard !onCard else { return }
+                                        dragCmdHeld = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+                                        if !dragCmdHeld { selection.clear() }
+                                        dragStart = val.startLocation
+                                    }
+                                    dragCurrent = val.location
+                                    updateLassoSelection()
                                 }
-                            }
-                        }
-                        .padding(.bottom, 16)
-                    }
-                    .onScrollGeometryChange(for: Bool.self) { geo in
-                        let bottomEdge = geo.contentOffset.y + geo.containerSize.height
-                        return bottomEdge >= geo.contentSize.height - 400
-                    } action: { _, near in
-                        if near && hasMore { loadHighlights(reset: false) }
+                                .onEnded { _ in
+                                    dragStart = nil
+                                    dragCurrent = nil
+                                }
+                        )
+
+                    if !selection.isEmpty {
+                        selectionBar
                     }
 
                     Divider()
                     CaptureSearchBar(searchText: $searchText, count: highlights.count)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    if let h = selectedHighlight {
-                        ZStack {
-                            Color.black.opacity(0.3)
-                                .ignoresSafeArea()
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil } }
-                            CardDetailView(
-                                highlight: h,
-                                onDismiss: { withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil } },
-                                onTagNavigation: { _, tag in
-                                    sidebarState.selectedFilter = .all
-                                    sidebarState.selectedApp = nil
-                                    sidebarState.selectedTagIds = [tag.id]
-                                    withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil }
-                                }
-                            )
-                            .id(h.id)
-                            .frame(maxWidth: 700, maxHeight: .infinity)
-                            .background(Color(.windowBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
-                            .padding(40)
-                        }
-                        .transition(.opacity)
-                        .onExitCommand { withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil } }
-                    }
+                // Cmd+Delete keyboard shortcut
+                .background {
+                    Button(action: deleteSelection) {}
+                        .keyboardShortcut(.delete, modifiers: .command)
+                        .frame(width: 0, height: 0)
+                        .opacity(0)
                 }
+                .overlay { detailOverlay }
+                .onExitCommand { selection.clear() }
+                .environmentObject(selection)
             }
         }
         .onChange(of: sidebarState.selectedFilter) { _, _ in guard isActive else { return }; loadHighlights(reset: true) }
@@ -129,6 +135,7 @@ struct TimelineView: View {
             guard let hid = notification.userInfo?["highlightId"] as? String else { return }
             highlights.removeAll { $0.id == hid }
             if selectedHighlight?.id == hid { selectedHighlight = nil }
+            selection.selectedIds.remove(hid)
             refreshSidebarData()
         }
         .onReceive(NotificationCenter.default.publisher(for: BrowseWindowController.showSettingsNotification)) { _ in
@@ -144,6 +151,175 @@ struct TimelineView: View {
         }
     }
 
+    // MARK: - Subviews
+
+    private var scrollContent: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if sessions.isEmpty {
+                    TimelineNoteComposer(tagIds: Array(sidebarState.selectedTagIds))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    emptyState
+                } else {
+                    ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                        SessionRow(
+                            session: session,
+                            labelText: sessionLabel(for: session.date),
+                            noteTagIds: Array(sidebarState.selectedTagIds),
+                            showsComposer: index == 0,
+                            showsTopConnector: index > 0,
+                            showsBottomConnector: index < sessions.count - 1,
+                            onSelect: { h in
+                                withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = h }
+                            }
+                        )
+                    }
+                }
+            }
+            .padding(.bottom, 16)
+        }
+        .onScrollGeometryChange(for: Bool.self) { geo in
+            let bottomEdge = geo.contentOffset.y + geo.containerSize.height
+            return bottomEdge >= geo.contentSize.height - 400
+        } action: { _, near in
+            if near && hasMore { loadHighlights(reset: false) }
+        }
+        .overlay(alignment: .topLeading) {
+            lassoRect
+        }
+    }
+
+    @ViewBuilder
+    private var lassoRect: some View {
+        if let start = dragStart, let current = dragCurrent {
+            GeometryReader { proxy in
+                let svOrigin = proxy.frame(in: .global).origin
+                let rect = makeRect(start: start, current: current)
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.08))
+                    .overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1))
+                    .frame(width: max(0, rect.width), height: max(0, rect.height))
+                    .offset(x: rect.minX - svOrigin.x, y: rect.minY - svOrigin.y)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var selectionBar: some View {
+        HStack(spacing: 10) {
+            Text("\(selection.count) selected")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Menu {
+                if allTags.isEmpty {
+                    Text("No collections yet")
+                } else {
+                    ForEach(allTags) { tag in
+                        Button(tag.name) { bulkAddTag(tag) }
+                    }
+                }
+            } label: {
+                Label("Add to Collection", systemImage: "folder.badge.plus")
+                    .font(.system(size: 12))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
+            Button(role: .destructive, action: deleteSelection) {
+                Label("Delete", systemImage: "trash")
+                    .font(.system(size: 12))
+            }
+
+            Button {
+                selection.clear()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 16))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private var detailOverlay: some View {
+        if let h = selectedHighlight {
+            ZStack {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil } }
+                CardDetailView(
+                    highlight: h,
+                    onDismiss: { withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil } },
+                    onTagNavigation: { _, tag in
+                        sidebarState.selectedFilter = .all
+                        sidebarState.selectedApp = nil
+                        sidebarState.selectedTagIds = [tag.id]
+                        withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil }
+                    }
+                )
+                .id(h.id)
+                .frame(maxWidth: 700, maxHeight: .infinity)
+                .background(Color(.windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
+                .padding(40)
+            }
+            .transition(.opacity)
+            .onExitCommand { withAnimation(.easeInOut(duration: 0.2)) { selectedHighlight = nil } }
+        }
+    }
+
+    private var emptyState: some View {
+        EmptyView()
+    }
+
+    // MARK: - Selection actions
+
+    private func updateLassoSelection() {
+        guard let start = dragStart, let current = dragCurrent else { return }
+        let rect = makeRect(start: start, current: current)
+        let inLasso = Set(cardFrames.filter { rect.intersects($0.value) }.map { $0.key })
+        selection.set(inLasso)
+    }
+
+    private func makeRect(start: CGPoint, current: CGPoint) -> CGRect {
+        CGRect(
+            x: min(start.x, current.x),
+            y: min(start.y, current.y),
+            width: abs(current.x - start.x),
+            height: abs(current.y - start.y)
+        )
+    }
+
+    private func deleteSelection() {
+        guard !selection.isEmpty else { return }
+        let ids = selection.selectedIds
+        for id in ids {
+            DatabaseManager.shared.deleteHighlight(id: id)
+        }
+        highlights.removeAll { ids.contains($0.id) }
+        if let sh = selectedHighlight, ids.contains(sh.id) { selectedHighlight = nil }
+        selection.clear()
+        refreshSidebarData()
+    }
+
+    private func bulkAddTag(_ tag: Tag) {
+        for id in selection.selectedIds {
+            DatabaseManager.shared.addTag(tag.id, toHighlight: id)
+        }
+        NotificationCenter.default.post(name: .highlightDataDidChange, object: nil)
+    }
+
+    // MARK: - Helpers
+
     private func sessionLabel(for date: Date) -> String {
         let cal = Calendar.current
         let time = date.formatted(date: .omitted, time: .shortened)
@@ -153,10 +329,6 @@ struct TimelineView: View {
             return date.formatted(.dateTime.weekday(.wide)) + "  \(time)"
         }
         return date.formatted(date: .abbreviated, time: .omitted) + "  \(time)"
-    }
-
-    private var emptyState: some View {
-        EmptyView()
     }
 
     // MARK: - Data
@@ -266,18 +438,16 @@ private struct SessionRow: View {
                     .foregroundStyle(.tertiary)
                     .padding(.top, 16)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 8) {
-                        if showsComposer {
-                            TimelineNoteComposer(tagIds: noteTagIds)
-                        }
-                        ForEach(session.highlights) { h in
-                            TimelineCard(highlight: h, onSelect: onSelect)
-                        }
+                FlowLayout(spacing: 8) {
+                    if showsComposer {
+                        TimelineNoteComposer(tagIds: noteTagIds)
                     }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 16)
+                    ForEach(session.highlights) { h in
+                        TimelineCard(highlight: h, onSelect: onSelect)
+                    }
                 }
+                .padding(.trailing, 20)
+                .padding(.bottom, 16)
             }
             .padding(.leading, 12)
         }
@@ -378,8 +548,19 @@ private struct TimelineCard: View {
     let highlight: Highlight
     let onSelect: (Highlight) -> Void
 
+    @EnvironmentObject var selection: SelectionManager
+
+    private var isSelected: Bool { selection.selectedIds.contains(highlight.id) }
+
     var body: some View {
-        Button { onSelect(highlight) } label: {
+        Button {
+            let cmdHeld = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+            if cmdHeld || !selection.isEmpty {
+                selection.toggle(highlight.id)
+            } else {
+                onSelect(highlight)
+            }
+        } label: {
             Group {
                 switch highlight.highlightType {
                 case "screenshot":
@@ -397,10 +578,31 @@ private struct TimelineCard: View {
             .frame(width: cardWidth, height: cardHeight)
             .background(Color(.controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.primary.opacity(0.07),
+                        lineWidth: isSelected ? 2 : 0.5
+                    )
+            )
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.white, Color.accentColor)
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(4)
+                        .shadow(color: .black.opacity(0.2), radius: 2)
+                }
+            }
         }
         .buttonStyle(.plain)
         .materialContextMenu(for: highlight)
+        .background(GeometryReader { geo in
+            Color.clear.preference(
+                key: CardFrameKey.self,
+                value: [highlight.id: geo.frame(in: .global)]
+            )
+        })
     }
 }
 

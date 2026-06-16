@@ -218,12 +218,8 @@ final class CopyToastController: ManagedWindowController {
                 guard let self, self.generation == showGeneration else { return }
                 self.pauseDismissTimer()
             },
-            onExit: { [weak self, weak stateHolder] in
+            onExit: { [weak self] in
                 guard let self, self.generation == showGeneration else { return }
-                guard let stateHolder else { return }
-                if stateHolder.state == .hovered {
-                    stateHolder.state = .collapsed
-                }
                 self.resumeDismissTimer()
             }
         )
@@ -625,9 +621,6 @@ private class HoverHandler: NSResponder {
     required init?(coder: NSCoder) { fatalError() }
 
     override func mouseEntered(with event: NSEvent) {
-        if stateHolder.state == .collapsed {
-            stateHolder.state = .hovered
-        }
         onEnter()
     }
 
@@ -770,7 +763,6 @@ struct CopyToastView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(.separator, lineWidth: 0.5)
         )
-        .offset(y: isHovered ? -4 : 0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: stateHolder.state)
         .onChange(of: transcriber.transcribedText) { _, newText in
             note = newText
